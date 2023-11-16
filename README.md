@@ -1,1 +1,1 @@
-# Deep-RL-algorithms
+# RL-algorithms
