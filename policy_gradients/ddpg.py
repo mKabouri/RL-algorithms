@@ -24,7 +24,7 @@ device = "cpu" if not torch.cuda.is_available() else "cuda"
 
 # DDPG is an off-policy algorithm
 # I want to solve Lunar Lander with continuous actions
-env = gym.make("LunarLander-v2", continuous=True)
+env = gym.make("LunarLanderContinuous-v2")
 obs, _ = env.reset()
 
 obs_dimension = env.observation_space.shape[0]
@@ -65,15 +65,13 @@ target_critic.load_state_dict(net_critic.state_dict())
 
 # In DDPG we learn a deterministic policies
 # Returns an action given an observation
-def policy(observation):
-    observation = torch.tensor(observation).to(device)
-    logits = net_actor(observation)
-    action = torch.argmax(F.softmax(logits, dim=-1))
+def policy(state):
+    state = torch.tensor(state).to(device)
+    logits = net_actor(state)
+    action = torch.tanh(logits)
     return action
 
-
-NORMAL_SCALAR=0.25
-
+NORMAL_SCALAR=0.15
 # Used for exploration
 # I didn't use the same as the original article
 def get_random_noise():
@@ -100,12 +98,12 @@ class ReplayMemory(object):
 ######################################################################
 
 # Hyperparameters (inspired from section 7 of the original paper)
-EPISODES=1000
-BUFFER_CAPACITY=500
-BATCH_SIZE=50
+EPISODES=10000
+BUFFER_CAPACITY=50000
+BATCH_SIZE=64
 LEARNING_RATE_ACTOR=1e-4
 LEARNING_RATE_CRITIC=1e-3
-GAMMA=1
+GAMMA=0.9
 TAU = 1e-3
 
 actor_optimizer = Adam(net_actor.parameters(), lr=LEARNING_RATE_ACTOR)
@@ -118,18 +116,35 @@ def one_train_step():
     get_batch = REPLAY_BUFFER.sample(BATCH_SIZE)
     batch = Transition(*zip(*get_batch))
 
-    state_batch = torch.tensor(batch.state, dtype=torch.float32).to(device)
-    action_batch = torch.tensor(batch.action, dtype=torch.float32).to(device)
+    state_batch = torch.tensor(np.array(batch.state), dtype=torch.float32).to(device)
+    action_batch = torch.tensor(np.array(batch.action), dtype=torch.float32).to(device)
     reward_batch = torch.tensor(batch.reward, dtype=torch.float32).to(device)
-    next_state_batch = torch.tensor(batch.next_state, dtype=torch.float32).to(device)
+    next_state_batch = torch.tensor(np.array(batch.next_state), dtype=torch.float32).to(device)
 
-    current_Q_values = net_critic(torch.cat([state_batch, action_batch], dim=-1))
+    # I compute target actions and target Q values for the loss
+    target_actor_actions = target_actor(state_batch).detach()
+    target_Q_values = target_critic(torch.cat([next_state_batch, target_actor_actions], dim=1)).squeeze(-1).detach()
 
+    # I compute current Q values as for the loss (squeeze just to match dimension below (I got a warn))
+    current_Q_values = net_critic(torch.cat([state_batch, action_batch], dim=1)).squeeze(-1)
+
+    # I update the critic
+    target = reward_batch+GAMMA*target_Q_values
+    critic_optimizer.zero_grad()
+    critic_loss = F.mse_loss(current_Q_values, target)
+    critic_loss.backward()
+    critic_optimizer.step()
+
+    # I update the actor with equation 6 of the original paper 
+    actor_optimizer.zero_grad()
+    current_actions = net_actor(state_batch)
+    actor_loss = -net_critic(torch.cat([state_batch, current_actions], dim=1)).squeeze(-1).mean()
+    actor_loss.backward()
+    actor_optimizer.step()
 
 def DDPG_algorithm():
     # For example, I will update the target networks
     # each 20 time step
-    target_update_counter = 0
     total_rewards = []
     for episode in range(EPISODES):
         obs, _ = env.reset()
@@ -144,22 +159,22 @@ def DDPG_algorithm():
             new_obs, reward, done, truncated, _ = env.step(action.cpu().detach().numpy())
             total_reward += reward
             # Store in the replay buffer
-            REPLAY_BUFFER.push(obs, action, reward, new_obs)
+            REPLAY_BUFFER.push(np.array(obs), action.cpu().detach().numpy(), reward, new_obs)
+            
+            if done or truncated:
+                break
 
             obs = new_obs
             if len(REPLAY_BUFFER) >= BATCH_SIZE:
                 # For clarity of the code we used this function call
                 one_train_step()
-
-                target_update_counter += 1
-                if target_update_counter%20 == 0:
-                    # Update target networks
-                    for target_param, param in zip(target_actor.parameters(), net_actor.parameters()):
-                        target_param.data.copy_(TAU*param.data + (1-TAU)*target_param.data)
-                    for target_param, param in zip(target_critic.parameters(), net_critic.parameters()):
-                            target_param.data.copy_(TAU*param.data + (1-TAU)*target_param.data)
+                # Update target networks
+                for target_param, param in zip(target_actor.parameters(), net_actor.parameters()):
+                    target_param.data.copy_(TAU*param.data + (1-TAU)*target_param.data)
+                for target_param, param in zip(target_critic.parameters(), net_critic.parameters()):
+                    target_param.data.copy_(TAU*param.data + (1-TAU)*target_param.data)
         
-        if episode%5==0:
+        if episode%5==0 and len(REPLAY_BUFFER) >= BATCH_SIZE:
             print(f"Episode: {episode}, total reward: {total_reward}")
             print("------------------------------")
             print()
@@ -168,14 +183,16 @@ def DDPG_algorithm():
     return total_rewards
 
 # Function to plot average reward per iteration of training
-def plot_rewards(avg_rewards, title):
-    plt.plot(avg_rewards)
+def plot_rewards(total_rewards, title):
+    plt.plot(total_rewards)
     plt.title(title)
     plt.xlabel('EPISODE')
     plt.ylabel('Total reward')
     plt.savefig("./" + title + ".png")
 
+def save_weights():...
+
 if __name__ == '__main__':
     print(f"Training with {device}")
-    DDPG_algorithm()
-
+    total_rewards = DDPG_algorithm()
+    plot_rewards(total_rewards, "Continuous LunarLander DDPG")
