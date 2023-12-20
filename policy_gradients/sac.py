@@ -64,6 +64,12 @@ def policy(state):
         logits = net_actor(state)
         return Categorical(logits=logits)
 
+# exploration_noise = 0.1
+# def choose_action(state):
+#     state = torch.tensor(state).to(device)
+#     action = policy(state).sample().item()
+#     action = np.clip(action+exploration_noise*np.random.randn(), 0, n_acts-1)
+#     return int(action)
 def choose_action(state):
     state = torch.tensor(state).to(device)
     return policy(state).sample().item()
@@ -140,19 +146,17 @@ def one_train_step():
 
     # Update policy network (actor network)
     # I try to calculate the loss: equation (12) of the original paper
-    # entropy_term = Categorical(logits=net_actor(state_batch)).log_prob(action_batch)
-    logits = net_actor(state_batch)
-    policy_distribution = Categorical(logits=logits)
-    sampled_actions = policy_distribution.sample()
-    log_probs = policy_distribution.log_prob(sampled_actions)
-
-    q_values = net_state_action_value(torch.cat([state_batch, sampled_actions.unsqueeze(1)], dim=-1))
+    entropy_term = Categorical(logits=net_actor(state_batch)).log_prob(action_batch)
+    current_Q_values = net_state_action_value(torch.cat([state_batch, action_batch.unsqueeze(1)], dim=-1))
+    
     actor_optimizer.zero_grad()
-    actor_loss = (ALPHA*log_probs - q_values).mean()
-
+    actor_loss = (ALPHA*entropy_term - current_Q_values).mean()
     actor_loss.backward()
     actor_optimizer.step()
 
+    # Update target networks
+    for target_param, param in zip(target_state_value.parameters(), net_state_value.parameters()):
+        target_param.data.copy_(TAU*param.data + (1-TAU)*target_param.data)
 
 def SAC_algorithm():
     total_rewards = []
