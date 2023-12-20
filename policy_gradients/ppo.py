@@ -216,9 +216,9 @@ def evaluate(render=False):
             break
     return total_reward
 
-# Function to plot average reward per iteration of training
-def plot_rewards(avg_rewards, title):
-    plt.plot(avg_rewards)
+# Function to plot total reward per iteration of training
+def plot_rewards(total_rewards, title):
+    plt.plot(total_rewards)
     plt.title(title)
     plt.xlabel('Iteration')
     plt.ylabel('Total reward')

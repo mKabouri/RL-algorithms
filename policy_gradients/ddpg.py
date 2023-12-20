@@ -10,6 +10,7 @@ import torch.nn.functional as F
 from torch.optim import Adam
 import gymnasium as gym
 import numpy as np
+from stable_baselines3.common.noise import OrnsteinUhlenbeckActionNoise
 import matplotlib.pyplot as plt
 import random
 from collections import deque, namedtuple
@@ -30,6 +31,15 @@ obs, _ = env.reset()
 obs_dimension = env.observation_space.shape[0]
 action_space = env.action_space
 action_size = len(action_space.high)
+
+# From: stable_baseline3.common.noise
+action_noise = OrnsteinUhlenbeckActionNoise(mean=0.15*np.ones(action_size), sigma=0.2*np.ones(action_size))
+
+# NORMAL_SCALAR=0.15
+# # Used for exploration
+# # I didn't use the same as the original article
+# def get_random_noise():
+#     return torch.tensor(np.random.randn(action_size)*NORMAL_SCALAR).to(device)
 
 # net_actor is a neural network representing the actor (the policy).
 net_actor = nn.Sequential(
@@ -69,13 +79,8 @@ def policy(state):
     state = torch.tensor(state).to(device)
     logits = net_actor(state)
     action = torch.tanh(logits)
-    return action
-
-NORMAL_SCALAR=0.15
-# Used for exploration
-# I didn't use the same as the original article
-def get_random_noise():
-    return torch.tensor(np.random.randn(action_size)*NORMAL_SCALAR).to(device)
+    action = action.cpu().detach().numpy() + action_noise()
+    return torch.tensor(action).to(device)
 
 ######################################################################
 # Replay Memory from:
@@ -98,12 +103,12 @@ class ReplayMemory(object):
 ######################################################################
 
 # Hyperparameters (inspired from section 7 of the original paper)
-EPISODES=10000
-BUFFER_CAPACITY=50000
+EPISODES=50000
+BUFFER_CAPACITY=5000
 BATCH_SIZE=64
 LEARNING_RATE_ACTOR=1e-4
 LEARNING_RATE_CRITIC=1e-3
-GAMMA=0.9
+GAMMA=0.99
 TAU = 1e-3
 
 actor_optimizer = Adam(net_actor.parameters(), lr=LEARNING_RATE_ACTOR)
@@ -142,6 +147,12 @@ def one_train_step():
     actor_loss.backward()
     actor_optimizer.step()
 
+    # Update target networks
+    for target_param, param in zip(target_actor.parameters(), net_actor.parameters()):
+        target_param.data.copy_(TAU*param.data + (1-TAU)*target_param.data)
+    for target_param, param in zip(target_critic.parameters(), net_critic.parameters()):
+        target_param.data.copy_(TAU*param.data + (1-TAU)*target_param.data)
+
 def DDPG_algorithm():
     # For example, I will update the target networks
     # each 20 time step
@@ -152,10 +163,12 @@ def DDPG_algorithm():
         done = False
         while not done:
             # We select an action according to current policy and random noise
-            action = torch.clamp(policy(obs) + get_random_noise(),
-                                 torch.tensor(action_space.low).to(device),
-                                 torch.tensor(action_space.high).to(device))
-            
+            # action = torch.clamp(policy(obs) + get_random_noise(),
+            #                      torch.tensor(action_space.low).to(device),
+            #                      torch.tensor(action_space.high).to(device))
+
+            # action = policy(obs) + get_random_noise()
+            action = policy(obs)            
             new_obs, reward, done, truncated, _ = env.step(action.cpu().detach().numpy())
             total_reward += reward
             # Store in the replay buffer
@@ -168,12 +181,7 @@ def DDPG_algorithm():
             if len(REPLAY_BUFFER) >= BATCH_SIZE:
                 # For clarity of the code we used this function call
                 one_train_step()
-                # Update target networks
-                for target_param, param in zip(target_actor.parameters(), net_actor.parameters()):
-                    target_param.data.copy_(TAU*param.data + (1-TAU)*target_param.data)
-                for target_param, param in zip(target_critic.parameters(), net_critic.parameters()):
-                    target_param.data.copy_(TAU*param.data + (1-TAU)*target_param.data)
-        
+
         if episode%5==0 and len(REPLAY_BUFFER) >= BATCH_SIZE:
             print(f"Episode: {episode}, total reward: {total_reward}")
             print("------------------------------")
@@ -182,7 +190,7 @@ def DDPG_algorithm():
         total_rewards.append(total_reward)
     return total_rewards
 
-# Function to plot average reward per iteration of training
+# Function to plot total reward per iteration of training
 def plot_rewards(total_rewards, title):
     plt.plot(total_rewards)
     plt.title(title)
