@@ -1,16 +1,4 @@
 """
-* N parallel actors
-
-* Use types for clarity
-
-* Entropy term + coeffs c1, c2
-"""
-"""
-Important:
-Adjust hyperparameters before training
-See paper appendix
-"""
-"""
 My sources for this implementation are:
 * Original paper: "Proximal Policy Optimization Algorithms" by Schulman et al.
 at: https://arxiv.org/pdf/1707.06347.pdf
@@ -51,9 +39,10 @@ def net_policy(input):
 
 # Learned policy
 def policy(state):
-    state = state.to(device)
-    logits = net_stochastic_policy(state)
-    return Categorical(logits=logits)
+    with torch.no_grad():
+        state = state.to(device)
+        logits = net_stochastic_policy(state)
+        return Categorical(logits=logits)
 
 def choose_action(state):
     state = state.to(device)

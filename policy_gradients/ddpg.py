@@ -76,11 +76,12 @@ target_critic.load_state_dict(net_critic.state_dict())
 # In DDPG we learn a deterministic policies
 # Returns an action given an observation
 def policy(state):
-    state = torch.tensor(state).to(device)
-    logits = net_actor(state)
-    action = torch.tanh(logits)
-    action = action.cpu().detach().numpy() + action_noise()
-    return torch.tensor(action).to(device)
+    with torch.no_grad():
+        state = torch.tensor(state).to(device)
+        logits = net_actor(state)
+        action = torch.tanh(logits)
+        action = action.cpu().detach().numpy() + action_noise()
+        return torch.tensor(action).to(device)
 
 ######################################################################
 # Replay Memory from:
@@ -117,6 +118,7 @@ critic_optimizer = Adam(net_critic.parameters(), lr=LEARNING_RATE_CRITIC)
 REPLAY_BUFFER = ReplayMemory(capacity=BUFFER_CAPACITY)
 
 # For clarity of the code, we used this function call
+# It update networks by calculating the loss for actor and critic
 def one_train_step():
     get_batch = REPLAY_BUFFER.sample(BATCH_SIZE)
     batch = Transition(*zip(*get_batch))
@@ -127,8 +129,9 @@ def one_train_step():
     next_state_batch = torch.tensor(np.array(batch.next_state), dtype=torch.float32).to(device)
 
     # I compute target actions and target Q values for the loss
-    target_actor_actions = target_actor(state_batch).detach()
-    target_Q_values = target_critic(torch.cat([next_state_batch, target_actor_actions], dim=1)).squeeze(-1).detach()
+    with torch.no_grad(): # I don't compute gradients for actor and critic targets
+        target_actor_actions = target_actor(state_batch).detach()
+        target_Q_values = target_critic(torch.cat([next_state_batch, target_actor_actions], dim=1)).squeeze(-1).detach()
 
     # I compute current Q values as for the loss (squeeze just to match dimension below (I got a warn))
     current_Q_values = net_critic(torch.cat([state_batch, action_batch], dim=1)).squeeze(-1)
@@ -136,6 +139,7 @@ def one_train_step():
     # I update the critic
     target = reward_batch+GAMMA*target_Q_values
     critic_optimizer.zero_grad()
+    # I compute the loss for the critic
     critic_loss = F.mse_loss(current_Q_values, target)
     critic_loss.backward()
     critic_optimizer.step()
@@ -143,6 +147,7 @@ def one_train_step():
     # I update the actor with equation 6 of the original paper 
     actor_optimizer.zero_grad()
     current_actions = net_actor(state_batch)
+    # I compute the loss for the actor
     actor_loss = -net_critic(torch.cat([state_batch, current_actions], dim=1)).squeeze(-1).mean()
     actor_loss.backward()
     actor_optimizer.step()
