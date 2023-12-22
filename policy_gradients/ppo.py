@@ -39,10 +39,9 @@ def net_policy(input):
 
 # Learned policy
 def policy(state):
-    with torch.no_grad():
-        state = state.to(device)
-        logits = net_stochastic_policy(state)
-        return Categorical(logits=logits)
+    state = state.to(device)
+    logits = net_stochastic_policy(state)
+    return Categorical(logits=logits)
 
 def choose_action(state):
     state = state.to(device)
@@ -75,7 +74,8 @@ def compute_loss(states,
     loss_clip_term = loss_clip(states, advantages, old_probs, actions, epsilon)
     loss_VF_term = loss_VF(values, returns)
     entropy_term = policy(states).entropy().mean() 
-    return - loss_clip_term + vf_coef*loss_VF_term - entropy_coef*entropy_term
+    loss = -loss_clip_term + vf_coef*loss_VF_term - entropy_coef*entropy_term
+    return loss
 
 BATCH_SIZE=200
 EPOCHS=10
