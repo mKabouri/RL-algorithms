@@ -15,7 +15,6 @@ import random
 from torch.optim import Adam
 from collections import deque, namedtuple
 import matplotlib.pyplot as plt
-import time
 
 
 env = gym.make("CartPole-v1")
@@ -59,10 +58,9 @@ target_state_value = nn.Sequential(
 
 # I use a stochastic policy
 def policy(state):
-    with torch.no_grad():
-        state = state.to(device)
-        logits = net_actor(state)
-        return Categorical(logits=logits)
+    state = state.to(device)
+    logits = net_actor(state)
+    return Categorical(logits=logits)
 
 # exploration_noise = 0.1
 # def choose_action(state):
@@ -96,13 +94,13 @@ class ReplayMemory(object):
 # Hyperparameters
 NB_ITERATION=10000
 BUFFER_CAPACITY=5000
-BATCH_SIZE=64
+BATCH_SIZE=60
 LEARNING_RATE_ACTOR=1e-4
 LEARNING_RATE_STATE_ACTION=1e-3
 LEARNING_RATE_STATE=1e-3
 GAMMA=0.99
-TAU = 1e-3
-ALPHA = 0.1
+TAU=1e-3
+ALPHA=0.9
 
 actor_optimizer = Adam(net_actor.parameters(), lr=LEARNING_RATE_ACTOR)
 state_action_optimizer = Adam(net_state_action_value.parameters(), lr=LEARNING_RATE_STATE_ACTION)
