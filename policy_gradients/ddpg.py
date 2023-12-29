@@ -14,11 +14,7 @@ from stable_baselines3.common.noise import OrnsteinUhlenbeckActionNoise
 import matplotlib.pyplot as plt
 import random
 from collections import deque, namedtuple
-import time
 
-
-import os
-os.environ["KMP_DUPLICATE_LIB_OK"]="TRUE"
 
 device = "cpu" if not torch.cuda.is_available() else "cuda"
 
