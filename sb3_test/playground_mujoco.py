@@ -198,8 +198,12 @@ def run_experiment(
             algo_seed=seed,
             device=device
         )
+        env.close()
+
         env = make_env(for_training=False)
         evaluate(env, agent, eval_timesteps)
+
+        env.close()
         callback.writer.close()
 
     rewards, seeds = load_rewards(files=[f"{log_dir}/rewards_seed_{seed}.txt" for seed in seeds])
