@@ -11,6 +11,7 @@ from stable_baselines3.sac import SAC
 from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.base_class import BaseAlgorithm as SB3Algorithm
 from stable_baselines3.common.policies import BasePolicy as SB3Policy
+from torch.utils.tensorboard import SummaryWriter
 from typing import Type, Union, List
 
 def load_rewards(files: List[str]):
@@ -52,7 +53,6 @@ def plot_learning_curves(training_rewards: np.ndarray, seeds: list[int]):
     plt.legend(loc='upper left')
     plt.show()
 
-
 class RewardCallback(BaseCallback):
     """
     Callback for logging the total rewards during training.
@@ -61,7 +61,7 @@ class RewardCallback(BaseCallback):
         self,
         seed: int,
         verbose: int = 0,
-        log_dir: str | None=None,
+        log_dir: str | None = None,
     ):
         super(RewardCallback, self).__init__(verbose=verbose)
         self.seed = seed
@@ -71,9 +71,12 @@ class RewardCallback(BaseCallback):
             os.makedirs(self.log_dir)
 
         self.f_rewards = os.path.join(self.log_dir, f"rewards_seed_{seed}.txt")
-        if not os.path.exists(self.f_rewards):
-            with open(self.f_rewards, "w") as f:
-                f.write("")
+        if os.path.exists(self.f_rewards):
+            os.remove(self.f_rewards)
+        with open(self.f_rewards, "w") as f:
+            f.write("")
+
+        self.writer = SummaryWriter(log_dir=os.path.join(self.log_dir, f"tensorboard_{seed}"))
 
         self.episode_rewards = 0
 
@@ -88,6 +91,7 @@ class RewardCallback(BaseCallback):
         return True
 
     def _log_rewards(self):
+        self.writer.add_scalar('Reward/Episode', self.episode_rewards, self.num_timesteps)
         with open(self.f_rewards, "a") as f:
             f.write(str(self.episode_rewards) + "\n")
 
@@ -96,7 +100,6 @@ def make_env():
     Create and return the HalfCheetah environment.
     """
     return gym.make("HalfCheetah-v4", render_mode="human")
-
 
 def learn_policy(
     timesteps: int,
@@ -137,7 +140,7 @@ def learn_policy(
         callback=callback
     )
     agent.save(path_to_agent)
-    
+
     return agent
 
 def evaluate(env: gym.Env, agent: Type[SB3Algorithm], eval_timesteps: int):
@@ -165,9 +168,11 @@ def run_experiment(
     Run training experiments with multiple seeds and plot learning curves.
     """
     env = make_env()
+    print(f"Using: {device}")
 
     for seed in seeds:
-        callback = RewardCallback(seed=seed, log_dir="./logs")
+        log_dir = "./logs"
+        callback = RewardCallback(seed=seed, log_dir=log_dir)
         agent = learn_policy(
             timesteps=learn_timesteps,
             env=env,
@@ -178,18 +183,20 @@ def run_experiment(
             device=device
         )
         evaluate(env, agent, eval_timesteps)
+        callback.writer.close()
 
-    rewards, seeds = load_rewards(files=[f"./logs/rewards_seed_{seed}.txt" for seed in seeds])
+    rewards, seeds = load_rewards(files=[f"{log_dir}/rewards_seed_{seed}.txt" for seed in seeds])
     plot_learning_curves(training_rewards=rewards, seeds=seeds)
 
 def parse_args():
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(description="Train and evaluate a policy on HalfCheetah-v4.")
-    parser.add_argument('--timesteps', type=int, default=int(1e5), help="Total training timesteps.")
-    parser.add_argument('--eval_timesteps', type=int, default=int(1e4), help="Total evaluation timesteps.")
+    parser.add_argument('--timesteps', type=int, default=int(1e6), help="Total training timesteps.")
+    parser.add_argument('--eval_timesteps', type=int, default=int(1e5), help="Total evaluation timesteps.")
     parser.add_argument('--path_to_agent', type=str, default="./half_cheetah_model.zip", help="Path to save/load the agent.")
     parser.add_argument('--seeds', type=int, nargs='+', default=[42, 100, 2023], help="List of seeds for experimentation.")
     parser.add_argument('--device', type=str, default="cuda" if torch.cuda.is_available() else "cpu", help="Device to use for training.")
+    # parser.add_argument('--device', type=str, default="cpu", help="Device to use for training.")
     return parser.parse_args()
 
 def main():
