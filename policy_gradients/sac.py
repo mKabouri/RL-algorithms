@@ -1,9 +1,8 @@
 """
-My source for this implementation is:
-* Original paper: "Soft Actor-Critic: Off-Policy Maximum Entropy
-Deep Reinforcement Learning with a Stochastic Actor"
+"Soft Actor-Critic: Off-Policy Maximum Entropy Deep Reinforcement
+Learning with a Stochastic Actor"
 by Tuomas Haarnoja et al.
-at: https://arxiv.org/pdf/1801.01290.pdf
+Link: https://arxiv.org/pdf/1801.01290.pdf
 """
 import torch
 import torch.nn as nn

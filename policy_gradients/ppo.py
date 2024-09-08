@@ -1,8 +1,6 @@
 """
-My sources for this implementation are:
-* Original paper: "Proximal Policy Optimization Algorithms" by Schulman et al.
-at: https://arxiv.org/pdf/1707.06347.pdf
-* Labs done in class about vanilla policy gradient
+"Proximal Policy Optimization Algorithms" by Schulman et al.
+Link: https://arxiv.org/pdf/1707.06347.pdf
 """
 import torch
 import torch.nn as nn

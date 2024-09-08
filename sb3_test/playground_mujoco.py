@@ -12,46 +12,16 @@ from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.base_class import BaseAlgorithm as SB3Algorithm
 from stable_baselines3.common.policies import BasePolicy as SB3Policy
 from torch.utils.tensorboard import SummaryWriter
-from typing import Type, Union, List
+from typing import Type, Union, List, Tuple
 
-def load_rewards(files: List[str]):
+def make_env(
+    for_training: bool = True
+) -> gym.Env:
     """
-    Load the rewards from the given files.
+    Create and return the HalfCheetah environment.
     """
-    rewards = []
-    seeds = []
-
-    for file in files:
-        seed = int(file.split("_")[-1].split(".")[0])
-        seeds.append(seed)
-        with open(file, "r") as f:
-            rewards.append([float(line) for line in f.readlines()])
-
-    return np.array(rewards), np.array(seeds)
-
-def plot_learning_curves(training_rewards: np.ndarray, seeds: list[int]):
-    """
-    Plot the learning curves for the training experiments.
-    """
-    sns.set(style="darkgrid")
-
-    mean_rewards = np.mean(training_rewards, axis=0)
-    std_rewards = np.std(training_rewards, axis=0)
-
-    plt.figure(figsize=(10, 6))
-    x_vals = np.arange(1, len(mean_rewards) + 1)
-
-    for i, seed in enumerate(seeds):
-        plt.plot(x_vals, training_rewards[i], label=f'Seed {seed}', alpha=0.5)
-
-    plt.plot(x_vals, mean_rewards, label='Mean Reward', color='blue', lw=2)
-    plt.fill_between(x_vals, mean_rewards - std_rewards, mean_rewards + std_rewards, color='blue', alpha=0.3)
-    
-    plt.title("Learning Curves During Training")
-    plt.xlabel("Episodes")
-    plt.ylabel("Total Reward")
-    plt.legend(loc='upper left')
-    plt.show()
+    render_mode = None if for_training else "human"
+    return gym.make("HalfCheetah-v4", render_mode=render_mode)
 
 class RewardCallback(BaseCallback):
     """
@@ -62,7 +32,7 @@ class RewardCallback(BaseCallback):
         seed: int,
         verbose: int = 0,
         log_dir: str | None = None,
-    ):
+    ) -> None:
         super(RewardCallback, self).__init__(verbose=verbose)
         self.seed = seed
 
@@ -86,20 +56,14 @@ class RewardCallback(BaseCallback):
     def _on_step(self) -> bool:
         self.episode_rewards += self.locals['rewards'][0]
         if self.locals['dones'][0] or self.locals['infos'][0]['TimeLimit.truncated']:
-            self._log_rewards()
-            self._reset_rewards()
+            self._log_and_reset_rewards()
         return True
 
-    def _log_rewards(self):
+    def _log_and_reset_rewards(self):
         self.writer.add_scalar('Reward/Episode', self.episode_rewards, self.num_timesteps)
         with open(self.f_rewards, "a") as f:
             f.write(str(self.episode_rewards) + "\n")
-
-def make_env():
-    """
-    Create and return the HalfCheetah environment.
-    """
-    return gym.make("HalfCheetah-v4", render_mode="human")
+        self._reset_rewards()
 
 def learn_policy(
     timesteps: int,
@@ -110,7 +74,7 @@ def learn_policy(
     policy: Union[str, Type[SB3Policy]] = "MlpPolicy",
     algo_seed: int | None = None,
     device: str = "cuda" if torch.cuda.is_available() else "cpu",
-):
+) -> SB3Algorithm:
     """
     Train or load a policy for the given environment.
     """
@@ -129,7 +93,7 @@ def learn_policy(
         device=device,
         verbose=1,
     )
-    
+
     if os.path.exists(path_to_agent):
         print("--> Load agent from checkpoint")
         agent = algo_cls.load(path_to_agent, env=env)
@@ -143,7 +107,11 @@ def learn_policy(
 
     return agent
 
-def evaluate(env: gym.Env, agent: Type[SB3Algorithm], eval_timesteps: int):
+def evaluate(
+    env: gym.Env,
+    agent: Type[SB3Algorithm],
+    eval_timesteps: int
+):
     """
     Evaluate the trained agent on the environment.
     For visualization, render the environment.
@@ -156,6 +124,54 @@ def evaluate(env: gym.Env, agent: Type[SB3Algorithm], eval_timesteps: int):
         if done or truncated:
             obs, _ = env.reset()
 
+def load_rewards(
+    files: List[str]
+) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Load the rewards from the given files.
+    """
+    rewards = []
+    seeds = []
+
+    for file in files:
+        seed = int(file.split("_")[-1].split(".")[0])
+        seeds.append(seed)
+        with open(file, "r") as f:
+            rewards.append([float(line) for line in f.readlines()])
+
+    return np.array(rewards), np.array(seeds)
+
+def plot_learning_curves(
+    training_rewards: np.ndarray,
+    seeds: list[int],
+    save_path: str | None = None
+):
+    """
+    Plot the learning curves for the training experiments.
+    """
+    sns.set(style="darkgrid")
+
+    mean_rewards = np.mean(training_rewards, axis=0)
+    std_rewards = np.std(training_rewards, axis=0)
+
+    plt.figure(figsize=(10, 6))
+    x_vals = np.arange(1, len(mean_rewards) + 1)
+
+    for i, seed in enumerate(seeds):
+        plt.plot(x_vals, training_rewards[i], label=f'Seed {seed}', alpha=0.5)
+
+    plt.plot(x_vals, mean_rewards, label='Mean Reward', color='blue', lw=2)
+    plt.fill_between(x_vals, mean_rewards - std_rewards, mean_rewards + std_rewards, color='blue', alpha=0.3)
+    
+    plt.title("Learning Curves During Training")
+    plt.xlabel("Episodes")
+    plt.ylabel("Total Reward")
+    plt.legend(loc='upper left')
+    plt.tight_layout()
+    plt.savefig(save_path) if save_path else plt.savefig("learning_curves.png")
+    print(f"Saved learning curves to {save_path}") if save_path else print("Saved learning curves to learning_curves.png")
+    plt.show()
+
 def run_experiment(
     learn_timesteps: int,
     eval_timesteps: int,
@@ -167,12 +183,12 @@ def run_experiment(
     """
     Run training experiments with multiple seeds and plot learning curves.
     """
-    env = make_env()
     print(f"Using: {device}")
 
     for seed in seeds:
         log_dir = "./logs"
         callback = RewardCallback(seed=seed, log_dir=log_dir)
+        env = make_env(for_training=True)
         agent = learn_policy(
             timesteps=learn_timesteps,
             env=env,
@@ -182,6 +198,7 @@ def run_experiment(
             algo_seed=seed,
             device=device
         )
+        env = make_env(for_training=False)
         evaluate(env, agent, eval_timesteps)
         callback.writer.close()
 
@@ -189,11 +206,13 @@ def run_experiment(
     plot_learning_curves(training_rewards=rewards, seeds=seeds)
 
 def parse_args():
-    """Parse command-line arguments."""
+    """
+    Parse command-line arguments.
+    """
     parser = argparse.ArgumentParser(description="Train and evaluate a policy on HalfCheetah-v4.")
-    parser.add_argument('--timesteps', type=int, default=int(1e6), help="Total training timesteps.")
-    parser.add_argument('--eval_timesteps', type=int, default=int(1e5), help="Total evaluation timesteps.")
-    parser.add_argument('--path_to_agent', type=str, default="./half_cheetah_model.zip", help="Path to save/load the agent.")
+    parser.add_argument('--timesteps', type=int, default=int(5e5), help="Total training timesteps.")
+    parser.add_argument('--eval_timesteps', type=int, default=int(5e4), help="Total evaluation timesteps.")
+    parser.add_argument('--path_to_agent', type=str, default=f"./half_cheetah_model_{'{seed}'}.zip", help="Path to save/load the agent.")
     parser.add_argument('--seeds', type=int, nargs='+', default=[42, 100, 2023], help="List of seeds for experimentation.")
     parser.add_argument('--device', type=str, default="cuda" if torch.cuda.is_available() else "cpu", help="Device to use for training.")
     # parser.add_argument('--device', type=str, default="cpu", help="Device to use for training.")

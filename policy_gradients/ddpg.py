@@ -1,8 +1,7 @@
 """
-My source for this implementation is:
-* Original paper: "Continuous control with deep reinforcement learning"
+"Continuous control with deep reinforcement learning"
 by Timothy P. Lillicrap et al.
-at: https://arxiv.org/pdf/1509.02971.pdf
+Link: https://arxiv.org/pdf/1509.02971.pdf
 """
 import torch
 import torch.nn as nn
