@@ -188,7 +188,6 @@ class MCTS(object):
     ) -> VNode:
         """
         """
-        # TODO: use simulated environment
         self.sim_env.reset()
         self.sim_env.unwrapped.state = node.state
         new_state, reward, done, truncated, _ = self.sim_env.step(action)
