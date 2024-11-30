@@ -1,7 +1,7 @@
 """
 Implementaion of Monte Carlo Tree Search in one file.
 
-MCTS is online planning algorithm that uses tree search and Monte Carlo simulations
+MCTS is an online planning algorithm that uses tree search and Monte Carlo simulations
 to find the best action to take in a given state. At each time step:
 
 1. Selection: Traverse the tree from the root node to a leaf node using an action
@@ -45,10 +45,6 @@ class VNode(object):
 
     def __str__(self):
         return f"Node({self.state}, {self.visits}, {list(self.children.keys())})"
-
-    @property
-    def get_parent(self):
-        return self.parent
 
     @property
     def is_leaf(self):
@@ -102,9 +98,7 @@ class VNode(object):
             selected_action = np.argmax(ucb_values)
             return selected_action
 
-    def update(
-        self,
-    ):
+    def update(self):
         """
         """
         self.visits += 1
@@ -128,10 +122,6 @@ class QNode(object):
         self.visits = 0
 
     @property
-    def get_parent(self):
-        return self.parent
-
-    @property
     def get_child(self):
         return self.child
 
@@ -152,9 +142,7 @@ class QNode(object):
 
 class MCTS(object):
     """
-    TODO: change env to callable that uses a simulated environment.
-    TODO: Fix depth of the tree.
-    TODO: Fix rollout horizon.
+    TODO: Fix rollout horizon for continuing tasks.
     """
     def __init__(
         self,
@@ -183,16 +171,14 @@ class MCTS(object):
                 stack.append((child.child, depth + 1))
         return max_depth
 
-    def select_node_to_expand(
-        self,
-    ) -> VNode:
+    def select_node_to_expand(self) -> VNode:
         """
         """
         node = self.root
         while not node.is_leaf and node.is_fully_expanded(self.sim_env.action_space):
             if isinstance(node, VNode):
                 action = node.select_action(self.sim_env.action_space)
-                node = node.get_child(action).get_child
+                node = node.get_child(action).child
         return node
 
     def expand(
@@ -205,10 +191,15 @@ class MCTS(object):
         # TODO: use simulated environment
         self.sim_env.reset()
         self.sim_env.unwrapped.state = node.state
-
         new_state, reward, done, truncated, _ = self.sim_env.step(action)
-        new_vnode = VNode(new_state, node)
-        node.add_child(action, QNode(action, reward, node, new_vnode))
+
+        if done or truncated:
+            return None
+
+        new_qnode = QNode(action, reward, node, None)
+        node.add_child(action, new_qnode)
+        new_vnode = VNode(new_state, new_qnode)
+        new_qnode.child = new_vnode
         return new_vnode
 
     def simulate(
@@ -218,7 +209,9 @@ class MCTS(object):
         """
         """
         state = node.state
+        self.sim_env.reset()
         self.sim_env.unwrapped.state = state
+
         total_reward = 0
         done = False
         while not done:
@@ -229,9 +222,7 @@ class MCTS(object):
                 break
         return total_reward
 
-    def plan(
-        self,
-    ) -> int:
+    def plan(self) -> int:
         """
         Returns the action to take in the real environment.
         """
@@ -241,10 +232,15 @@ class MCTS(object):
             # Selection
             node = self.select_node_to_expand()
             action = node.select_action(self.sim_env.action_space)
+
             # Expansion
             child_node = self.expand(node, action)
+            if child_node is None:
+                continue
+
             # Simulation
             total_reward = self.simulate(child_node)
+
             # Backup
             iterator = child_node
             while iterator is not None:
@@ -253,7 +249,7 @@ class MCTS(object):
                     iterator.update(total_reward)
                 elif isinstance(iterator, VNode):
                     iterator.update()
-                iterator = iterator.get_parent
+                iterator = iterator.parent
 
         action_to_take = self.root.select_action(self.sim_env.action_space)
         print(f"Action to take: {action_to_take}")
@@ -267,10 +263,8 @@ class MCTS(object):
         """
         Prune the tree after the action has been taken.
         """
-        print(f"{self.get_tree_depth() = }")
         self.root = self.root.get_child(action).get_child
         self.root.parent = None
-        print(f"{self.get_tree_depth() = }")
 
 def run_mcts(
     env: gym.Env,
@@ -304,7 +298,7 @@ def run_mcts(
 
 if __name__ == "__main__":
     ENV_NAME = "CartPole-v1"
-    TIME_LIMIT = 60
+    TIME_LIMIT = 20
     UCB_CONSTANT = np.sqrt(2)
     SEED = 42
     env = gym.make(ENV_NAME, render_mode="human")
