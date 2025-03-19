@@ -16,11 +16,11 @@ from collections import deque, namedtuple
 import matplotlib.pyplot as plt
 
 
-env = gym.make("CartPole-v1")
+env = gym.make("Pendulum-v1")
 obs, _ = env.reset()
 
 obs_dim = env.observation_space.shape[0]
-n_acts = env.action_space.n
+n_acts = env.action_space.shape[0]
 
 device = "cpu" if not torch.cuda.is_available() else "cuda"
 
@@ -29,11 +29,20 @@ device = "cpu" if not torch.cuda.is_available() else "cuda"
 # State-action value approximator (Q value)
 # State value approximator
 # Target state value approximator
-net_actor = nn.Sequential(
-    nn.Linear(obs_dim, 64), 
-    nn.ReLU(),
-    nn.Linear(64, n_acts)
-).to(device)
+class Actor(nn.Module):
+    def __init__(self, obs_dimension, action_size):
+        super(Actor, self).__init__()
+        self.net = nn.Sequential(
+            nn.Linear(obs_dimension, 64),
+            nn.ReLU(),
+            nn.Linear(64, action_size),
+            nn.Tanh()
+        )
+
+    def forward(self, obs):
+        return 2*self.net(obs)
+
+net_actor = Actor(obs_dim, n_acts).to(device)
 
 # We add plus 1 for action (one action)
 net_state_action_value = nn.Sequential(
@@ -58,8 +67,9 @@ target_state_value = nn.Sequential(
 # I use a stochastic policy
 def policy(state):
     state = state.to(device)
-    logits = net_actor(state)
-    return Categorical(logits=logits)
+    return net_actor(state)
+    # logits = net_actor(state)
+    # return Categorical(logits=logits)
 
 # exploration_noise = 0.1
 # def choose_action(state):
@@ -68,8 +78,9 @@ def policy(state):
 #     action = np.clip(action+exploration_noise*np.random.randn(), 0, n_acts-1)
 #     return int(action)
 def choose_action(state):
-    state = torch.tensor(state).to(device)
-    return policy(state).sample().item()
+    return policy(torch.tensor(state).to(device)).detach().cpu().numpy()
+    # state = torch.tensor(state).to(device)
+    # return policy(state).sample().item()
 
 ######################################################################
 # Replay Memory from:
@@ -157,6 +168,7 @@ def one_train_step():
 
 def SAC_algorithm():
     total_rewards = []
+    best_reward = -np.inf
     for iteration in range(NB_ITERATION):
         obs, _ = env.reset()
         total_reward = 0
@@ -173,6 +185,9 @@ def SAC_algorithm():
 
             if done or truncated:
                 break
+        if best_reward < total_reward:
+            best_reward = total_reward
+            save_best_weights()
 
         total_rewards.append(total_reward)
         # Different from DDPG. Here, I do optimization after the episode.
@@ -186,6 +201,11 @@ def SAC_algorithm():
             print()
     return total_rewards
 
+def save_best_weights():
+    torch.save(net_actor.state_dict(), "./best_sac_weights.pth")
+
+def load_best_weights():
+    net_actor.load_state_dict(torch.load("./best_sac_weights.pth"))
 
 # Function to plot total reward per iteration of training
 def plot_rewards(total_rewards, title):
@@ -194,6 +214,15 @@ def plot_rewards(total_rewards, title):
     plt.xlabel('EPISODE')
     plt.ylabel('Total reward')
     plt.savefig("./" + title + ".png")
+
+def evaluate():
+    load_best_weights()
+    obs, _ = env.reset()
+    done = False
+    while not done:
+        action = choose_action(obs)
+        obs, _, done, _, _ = env.step(action)
+        env.render()
 
 if __name__ == '__main__':
     print(f"Training with {device}")
