@@ -210,6 +210,7 @@ def load_weights():
 
 def evaluate():
     load_weights()
+    env = gym.make("Pendulum-v1", render_mode="human")
     obs, _ = env.reset()
     done = False
     total_reward = 0
@@ -223,3 +224,4 @@ if __name__ == '__main__':
     print(f"Training with {device}")
     total_rewards = DDPG_algorithm()
     plot_rewards(total_rewards, "Pendulum DDPG")
+    evaluate()
