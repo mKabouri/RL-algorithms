@@ -7,10 +7,26 @@ import orbax.checkpoint as ocp
 import wandb
 
 
-def init_wandb(cfg: ml_collections.ConfigDict, **kwargs):
+def _config_value(value):
+    if callable(value):
+        return getattr(value, "__name__", type(value).__name__)
+    if isinstance(value, tuple):
+        return list(value)
+    return value
+
+
+def _config_dict(cfg: ml_collections.ConfigDict) -> dict:
+    return {key: _config_value(value) for key, value in cfg.items()}
+
+
+def init_wandb(cfg: ml_collections.ConfigDict, agent_cfg: ml_collections.ConfigDict = None, **kwargs):
+    config = {"training": _config_dict(cfg)}
+    if agent_cfg is not None:
+        config["agent"] = _config_dict(agent_cfg)
+
     wandb.init(
         project="gcrl",
-        config=cfg.to_dict(),
+        config=config,
         reinit=True,
         **kwargs,
     )
@@ -27,9 +43,18 @@ def _flatten(d: dict, parent_key: str = "", sep: str = "/") -> dict:
     return items
 
 
+def _to_loggable(value):
+    value = jax.device_get(value)
+    if isinstance(value, np.ndarray) and value.shape == ():
+        return value.item()
+    if isinstance(value, np.generic):
+        return value.item()
+    return value
+
+
 def log_metrics(metrics: dict, step: int, prefix: str = ""):
     flat = _flatten(metrics)
-    log_dict = {f"{prefix}/{k}" if prefix else k: v for k, v in flat.items()}
+    log_dict = {f"{prefix}/{k}" if prefix else k: _to_loggable(v) for k, v in flat.items()}
     wandb.log(log_dict, step=step)
 
 
@@ -37,7 +62,7 @@ def evaluate(agent, env, num_episodes: int, rng: jax.random.PRNGKey) -> dict:
     """
     Run the agent greedily for num_episodes.
     Expects the env to provide info['goal'] at reset (ogbench convention).
-    The agent must implement sample_actions(obs_goal, rng, deterministic=True).
+    The agent must implement sample_actions(obs, goal, rng, deterministic=True).
     """
     returns, successes, lengths = [], [], []
 
@@ -49,8 +74,7 @@ def evaluate(agent, env, num_episodes: int, rng: jax.random.PRNGKey) -> dict:
 
         while not done:
             rng, key = jax.random.split(rng)
-            policy_obs = np.concatenate([obs, goal], axis=-1) if goal is not None else obs
-            action = np.array(agent.sample_actions(policy_obs, key, deterministic=True))
+            action = np.array(agent.sample_actions(obs, goal, key, deterministic=True))
             obs, reward, terminated, truncated, info = env.step(action)
             done = terminated or truncated
             ep_return += reward
@@ -91,8 +115,7 @@ def record_video(
             frames.append(frame)
 
         rng, subkey = jax.random.split(rng)
-        policy_obs = np.concatenate([obs, goal], axis=-1) if goal is not None else obs
-        action = np.array(agent.sample_actions(policy_obs, subkey, deterministic=True))
+        action = np.array(agent.sample_actions(obs, goal, subkey, deterministic=True))
         obs, _, terminated, truncated, info = env.step(action)
         done = terminated or truncated
 
@@ -106,6 +129,9 @@ def record_video(
 
 def save_checkpoint(agent, checkpoint_dir: str, step: int):
     path = os.path.join(checkpoint_dir, f"step_{step}")
+    if os.path.exists(path):
+        return
+
     checkpointer = ocp.PyTreeCheckpointer()
     checkpointer.save(path, agent)
 

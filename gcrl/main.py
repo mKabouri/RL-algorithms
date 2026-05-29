@@ -1,5 +1,7 @@
 import argparse
 import importlib
+import os
+from datetime import datetime
 
 import jax
 import ml_collections
@@ -9,7 +11,7 @@ from tqdm import tqdm
 
 from agents import agents
 from logging_utils import evaluate, init_wandb, log_metrics, record_video, save_checkpoint
-from replay_buffer import HierarchicalReplayBuffer
+from replay_buffer import HierarchicalReplayBuffer, GCRLReplayBuffer
 
 AGENT_REGISTRY = {
     "hiql": "agents.hiql",
@@ -18,27 +20,29 @@ AGENT_REGISTRY = {
 
 
 def get_config() -> ml_collections.ConfigDict:
+    """Generic experiment/training config. Agent hyperparameters live in agents/<agent>.py."""
     return ml_collections.ConfigDict(
         dict(
             env="antmaze-large-navigate-v0",
             seed=42,
             agent="hiql",
             # training
-            num_steps=1_000_000,
-            batch_size=256,
+            num_steps=2_000_000,
+            batch_size=1024,
             utd=1,
-            # reward
-            reward_type="neg_one_zero",  # 'neg_one_zero' → {-1, 0} | 'zero_one' → {0, 1}
-            goal_threshold=0.1,
             # logging
-            log_interval=1_000,
-            eval_interval=10_000,
+            log_interval=10_000,
+            eval_interval=200_000,
             num_eval_episodes=50,
             # video
-            record_video=False,
+            record_video=True,
             # checkpointing
             save_checkpoints=True,
-            checkpoint_dir="checkpoints",
+            # checkpoint dir should be absolute
+            checkpoint_dir=os.path.abspath("checkpoints"),
+            # reward type: "neg_one_zero" or "zero_one"
+            reward_type="neg_one_zero",
+            goal_threshold=0.05
         )
     )
 
@@ -63,30 +67,40 @@ def parse_args(cfg: ml_collections.ConfigDict) -> ml_collections.ConfigDict:
 
 def main():
     cfg = parse_args(get_config())
+    cfg.checkpoint_dir = os.path.join(cfg.checkpoint_dir, datetime.now().strftime("%Y-%m-%d-%H-%M"))
+    agent_cfg = build_agent_cfg(cfg.agent)
 
-    init_wandb(cfg)
+    init_wandb(cfg, agent_cfg=agent_cfg)
 
     rng = jax.random.PRNGKey(cfg.seed)
     np.random.seed(cfg.seed)
 
-    agent_cfg = build_agent_cfg(cfg.agent)
-
     # create environment, agent, replay buffer
     env, train_dataset, _ = ogbench.make_env_and_datasets(cfg.env)
-    replay_buffer = HierarchicalReplayBuffer.create(
+    replay_buffers = {
+        "hiql": HierarchicalReplayBuffer,
+        "crl": GCRLReplayBuffer,
+    }
+
+    replay_buffer = replay_buffers[cfg.agent].create(
         observations=train_dataset["observations"],
         actions=train_dataset["actions"],
         next_observations=train_dataset["next_observations"],
         dones=train_dataset["terminals"],
-        subgoal_steps=agent_cfg.subgoal_steps,
+        subgoal_steps=agent_cfg.subgoal_steps if hasattr(agent_cfg, "subgoal_steps") else 0,
     )
     agent = agents[cfg.agent].create(rng, env.observation_space.shape[0], env.action_space.shape[0], agent_cfg)
 
     # main training loop: sample batch, update agent, log, eval
     for i in tqdm(range(1, cfg.num_steps + 1)):
+        rng, batch_rng = jax.random.split(rng)
         batch = replay_buffer.sample(
-            cfg.batch_size, agent.rng, reward_type=cfg.reward_type, goal_threshold=cfg.goal_threshold
+            cfg.batch_size,
+            batch_rng,
+            reward_type=cfg.reward_type,
+            goal_threshold=cfg.goal_threshold,
         )
+        agent = agent.replace(rng=rng)
         agent, update_logs = agent.update(batch)
 
         if i % cfg.log_interval == 0:
