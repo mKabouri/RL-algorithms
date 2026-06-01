@@ -24,11 +24,18 @@ def init_wandb(cfg: ml_collections.ConfigDict, agent_cfg: ml_collections.ConfigD
     if agent_cfg is not None:
         config["agent"] = _config_dict(agent_cfg)
 
+    clean_kwargs = {}
+    for key, value in kwargs.items():
+        if value == "":
+            continue
+        clean_kwargs[key] = value
+    if "project" not in clean_kwargs:
+        clean_kwargs["project"] = "gcrl"
+
     wandb.init(
-        project="gcrl",
         config=config,
         reinit=True,
-        **kwargs,
+        **clean_kwargs,
     )
 
 
@@ -60,9 +67,8 @@ def log_metrics(metrics: dict, step: int, prefix: str = ""):
 
 def evaluate(agent, env, num_episodes: int, rng: jax.random.PRNGKey) -> dict:
     """
-    Run the agent greedily for num_episodes.
-    Expects the env to provide info['goal'] at reset (ogbench convention).
-    The agent must implement sample_actions(obs, goal, rng, deterministic=True).
+    Evaluate the agent for a number of episodes.
+
     """
     returns, successes, lengths = [], [], []
 
@@ -133,10 +139,22 @@ def save_checkpoint(agent, checkpoint_dir: str, step: int):
         return
 
     checkpointer = ocp.PyTreeCheckpointer()
-    checkpointer.save(path, agent)
+    checkpoint = {
+        "rng": agent.rng,
+        "train_states": agent.train_states,
+    }
+    checkpointer.save(path, checkpoint)
 
 
 def restore_checkpoint(agent, checkpoint_dir: str, step: int):
     path = os.path.join(checkpoint_dir, f"step_{step}")
     checkpointer = ocp.PyTreeCheckpointer()
-    return checkpointer.restore(path, item=agent)
+    checkpoint = {
+        "rng": agent.rng,
+        "train_states": agent.train_states,
+    }
+    checkpoint = checkpointer.restore(path, item=checkpoint)
+    return agent.replace(
+        rng=checkpoint["rng"],
+        train_states=checkpoint["train_states"],
+    )
